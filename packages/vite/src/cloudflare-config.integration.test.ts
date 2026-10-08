@@ -26,18 +26,30 @@ describe.sequential('Cloudflare configuration integration', () => {
 
 	it('builds a native Worker with the generated entry and agent binding', async () => {
 		await (await createBuilder({ root, logLevel: 'silent' })).buildApp();
-		const manifest = JSON.parse(
-			await fs.readFile(path.join(root, '.cloudflare/output/v0/manifest.json'), 'utf8'),
+		const output = path.join(root, '.cloudflare/output/v0/workers/default');
+		const config = JSON.parse(await fs.readFile(path.join(output, 'worker.config.json'), 'utf8'));
+		expect(config.manifest.mainModule).toBe('index.js');
+		expect(config.compatibilityFlags).toContain('nodejs_compat');
+		expect(config.env.FLUE_ECHO_AGENT).toEqual({
+			type: 'durable-object',
+			worker: 'flue-cloudflare-config',
+			exportName: 'FlueEchoAgent',
+		});
+		expect(config.env.MESSAGE).toEqual({ type: 'text', value: 'hello' });
+		expect(config.exports.FlueEchoAgent).toEqual({ type: 'durable-object', storage: 'sqlite' });
+		expect(await fs.readFile(path.join(output, 'bundle/index.js'), 'utf8')).toContain(
+			'FlueEchoAgent',
 		);
-		expect(manifest).toBeDefined();
 	}, 60_000);
 
 	it('retains the Wrangler customizer path', async () => {
-		await (await createBuilder({
-			root,
-			configFile: path.join(root, 'vite.config.wrangler.ts'),
-			logLevel: 'silent',
-		})).buildApp();
+		await (
+			await createBuilder({
+				root,
+				configFile: path.join(root, 'vite.config.wrangler.ts'),
+				logLevel: 'silent',
+			})
+		).buildApp();
 		const config = JSON.parse(
 			await fs.readFile(path.join(root, 'dist/flue_cloudflare_config/wrangler.json'), 'utf8'),
 		);

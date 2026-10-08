@@ -132,7 +132,11 @@ export function flueWorkerConfig(): FlueWorkerConfigCustomizer {
 				),
 			);
 		}
-		applyFlueWorkerConfig(config as Record<string, unknown>, source.doBindings);
+		if ('compatibilityDate' in config) {
+			applyNativeFlueWorkerConfig(config as Record<string, unknown>, source.doBindings);
+		} else {
+			applyFlueWorkerConfig(config as Record<string, unknown>, source.doBindings);
+		}
 	};
 }
 
@@ -198,25 +202,81 @@ function applyFlueWorkerConfig(
  * AsyncLocalStorage) produce confusing runtime errors, and a user pins a
  * date deliberately.
  */
-function validateCompatibilityDate(config: Record<string, unknown>): void {
-	if (typeof config.compatibility_date !== 'string') return;
-	const userDate = config.compatibility_date;
+function validateCompatibilityDate(
+	config: Record<string, unknown>,
+	field = 'compatibility_date',
+): void {
+	const userDate = config[field];
+
+	if (typeof userDate !== 'string') return;
+
 	if (!/^\d{4}-\d{2}-\d{2}$/.test(userDate)) {
 		throw stackless(
 			new Error(
-				`[flue] Your wrangler config's "compatibility_date" ("${userDate}") is not in YYYY-MM-DD format.`,
+				`[flue] Your Cloudflare config's "${field}" ("${userDate}") is not in YYYY-MM-DD format.`,
 			),
 		);
 	}
 	if (userDate < MIN_COMPATIBILITY_DATE) {
 		throw stackless(
 			new Error(
-				`[flue] Your wrangler config's "compatibility_date" is "${userDate}". ` +
+				`[flue] Your Cloudflare config's "${field}" is "${userDate}". ` +
 					`Flue requires at least "${MIN_COMPATIBILITY_DATE}" for SQLite-backed Durable Object support, nodejs_compat v2, and AsyncLocalStorage. ` +
 					`Bump the date (set it to today unless you have a specific reason).`,
 			),
 		);
 	}
+}
+
+function applyNativeFlueWorkerConfig(
+	config: Record<string, unknown>,
+	doBindings: readonly FlueDoBinding[],
+): void {
+	validateCompatibilityDate(config, 'compatibilityDate');
+	const flags = Array.isArray(config.compatibilityFlags)
+		? (config.compatibilityFlags as unknown[]).filter(
+				(flag): flag is string => typeof flag === 'string',
+			)
+		: [];
+
+	if (!flags.includes(REQUIRED_COMPAT_FLAG)) flags.push(REQUIRED_COMPAT_FLAG);
+	config.compatibilityFlags = flags;
+
+	if (typeof config.entrypoint !== 'string' || config.entrypoint.length === 0) {
+		config.entrypoint = VIRTUAL_WORKER_ENTRY;
+	}
+	const env = { ...(config.env as Record<string, unknown> | undefined) };
+
+	for (const binding of doBindings) {
+		const existing = env[binding.name];
+
+		if (existing !== undefined) {
+			if (
+				typeof existing !== 'object' ||
+				existing === null ||
+				!('type' in existing) ||
+				existing.type !== 'durable-object' ||
+				!('exportName' in existing) ||
+				existing.exportName !== binding.class_name ||
+				!('worker' in existing) ||
+				existing.worker !== config.name
+			) {
+				throw stackless(
+					new Error(
+						`[flue] cloudflare.config.ts env binding "${binding.name}" is reserved by Flue. ` +
+							`Expected a durable-object binding to "${binding.class_name}" in Worker "${config.name}".`,
+					),
+				);
+			}
+		} else {
+			env[binding.name] = {
+				type: 'durable-object',
+				worker: config.name,
+				exportName: binding.class_name,
+			};
+		}
+	}
+	config.env = env;
 }
 
 /**
