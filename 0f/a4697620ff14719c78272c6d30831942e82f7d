@@ -1,0 +1,49 @@
+.prettierignore
+  s_5a7827c8da08f3::t_876ebb9ab4d285 4
+examples/cloudflare-config/README.md
+  s_93ba4661ae72f7::t_5502e26dcab774 1-107
+examples/cloudflare-config/cloudflare.config.ts
+  s_5a7827c8da08f3::t_f73138972b9e91 6
+examples/cloudflare-config/package.json
+  s_5a7827c8da08f3::t_8d570e7bebd46c 17
+examples/cloudflare-config/vite.config.ts
+  s_5a7827c8da08f3::t_d6fdccb8dfa424 6
+examples/cloudflare-config/vite.config.wrangler.ts
+  s_5a7827c8da08f3::t_1cec870ed64d7a 6
+examples/cloudflare-config/wrangler.jsonc
+  s_5a7827c8da08f3::t_701df764a29810 3
+packages/vite/package.json
+  s_5a7827c8da08f3::t_9a72a17b1a52ee 49-50
+packages/vite/src/cloudflare-config.integration.test.ts
+  s_93ba4661ae72f7::t_04e1c89f6c73b0 5,27-37,73-77,79-105
+packages/vite/src/cloudflare-worker-config.test.ts
+  s_93ba4661ae72f7::t_081ab037ce6a53 1-109
+packages/vite/src/cloudflare-worker-config.ts
+  s_93ba4661ae72f7::t_6cdbdaa9881caa 14-17,20-21,28-29,134,157-159,165-166,171-173,175,177,183-186,189-193,208,220,232
+pnpm-lock.yaml
+  s_5a7827c8da08f3::t_963d6c3c7b560a 75,109,201,334-337,349,371,408,445,516,538,541,581,615,674,677,766,769,806,809,877,880,920,954,1013,1050,1084,1155,1192,1195,1275,1300,1325,1347,1391,1413,1476,1608,1685,1729,1754,1776,1810,1835,1857,1884,1896-1900,1921,1934,1959,2845-2847,11128,11141-11154,11161,11184,11192,11261-11262,14571,14583,17310,17312,18769-18785,18804-18821
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "0fa4697620ff14719c78272c6d30831942e82f7d",
+  "prompts": {},
+  "sessions": {
+    "s_5a7827c8da08f3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11db7-6b64-7260-838a-060258d66c84",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Eric Clemmons <eclemmons@cloudflare.com>"
+    },
+    "s_93ba4661ae72f7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11456-9e55-7c11-beb0-f4696e00ac53",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Eric Clemmons <eclemmons@cloudflare.com>"
+    }
+  }
+}
