@@ -1,0 +1,22 @@
+{
+	"name": "cloudflare-config",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "vite dev",
+		"build": "vite build",
+		"build:wrangler": "vite build --config vite.config.wrangler.ts"
+	},
+	"dependencies": {
+		"@flue/runtime": "workspace:*",
+		"hono": "4.12.32"
+	},
+	"devDependencies": {
+		"@cloudflare/vite-plugin": "2.0.0-beta.sha-52b0dc0e9",
+		"@cloudflare/vite-plugin-wrangler": "npm:@cloudflare/vite-plugin@1.58.0",
+		"@flue/vite": "workspace:*",
+		"cf": "1.0.0-beta.12",
+		"vite": "8.1.5",
+		"wrangler": "4.137.0"
+	}
+}
