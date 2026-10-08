@@ -2,7 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cloudflare } from '@cloudflare/vite-plugin';
-import { createBuilder } from 'vite';
+import { createBuilder, createServer } from 'vite';
 import { describe, expect, it } from 'vitest';
 import { flueWorkerConfig } from './cloudflare-worker-config.ts';
 import { flue } from './flue-plugin.ts';
@@ -22,6 +22,17 @@ describe.sequential('Cloudflare configuration integration', () => {
 				],
 			}),
 		).rejects.toThrow('`config` cannot be used together with `experimental.newConfig`');
+	});
+
+	it('does not bypass Flue validation when the stable customizer is removed', async () => {
+		await expect(
+			createBuilder({
+				root,
+				configFile: false,
+				logLevel: 'silent',
+				plugins: [flue(), cloudflare({ experimental: { newConfig: true } })],
+			}),
+		).rejects.toThrow("not receiving Flue's Worker configuration");
 	});
 
 	it('builds a native Worker with the generated entry and agent binding', async () => {
@@ -59,5 +70,37 @@ describe.sequential('Cloudflare configuration integration', () => {
 			name: 'FLUE_ECHO_AGENT',
 			class_name: 'FlueEchoAgent',
 		});
+		expect(config.vars.MESSAGE).toBe('hello');
+		expect(config.migrations).toEqual([{ tag: 'v1', new_sqlite_classes: ['FlueEchoAgent'] }]);
+		expect(
+			await fs.readFile(path.join(root, 'dist/flue_cloudflare_config/index.js'), 'utf8'),
+		).toContain('FlueEchoAgent');
 	}, 60_000);
+
+	it.each(['vite.config.ts', 'vite.config.wrangler.ts'])(
+		'serves the Worker and agent locally with %s',
+		async (configFile) => {
+			const server = await createServer({
+				root,
+				configFile: path.join(root, configFile),
+				logLevel: 'silent',
+				server: { host: '127.0.0.1', port: 0 },
+			});
+
+			try {
+				await server.listen();
+				const [url] = server.resolvedUrls?.local ?? [];
+
+				if (!url) throw new Error('Vite did not expose a local server URL');
+				expect(await (await fetch(url)).text()).toBe('hello');
+				const response = await fetch(new URL('/agents/echo/local-check/abort', url), {
+					method: 'POST',
+				});
+				expect(response.status).toBe(200);
+			} finally {
+				await server.close();
+			}
+		},
+		60_000,
+	);
 });

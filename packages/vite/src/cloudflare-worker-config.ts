@@ -11,23 +11,22 @@
  * });
  * ```
  *
- * The sibling plugin owns the wrangler config end to end: it reads the
- * user's authored `wrangler.jsonc` (its `configPath`), resolves the active
- * Cloudflare environment, invokes this customizer on the resolved config,
- * and emits the merged deploy config into the build output. Flue never
- * reads, merges, or writes a wrangler config file. The customizer
+ * The sibling plugin owns config loading and build output. Version 1 reads
+ * `wrangler.jsonc`; version 2 reads `cloudflare.config.ts` and invokes the
+ * same customizer with the native Worker schema. Flue never reads or writes
+ * either configuration file. The customizer
  * contributes only what Flue derives at config-resolution time:
  *
- *   - `main` → `virtual:flue/worker`, the generated Worker entry served by
- *     the `flue()` plugin (left alone when the user set their own `main`);
+ *   - `main` / `entrypoint` → `virtual:flue/worker`, the generated Worker
+ *     entry (left alone when the user set their own entry);
  *   - one Durable Object binding per scanned `'use agent'` agent;
  *   - the `nodejs_compat` compatibility flag (unioned in);
  *   - validation of a user-set `compatibility_date` against Flue's floor.
  *
  * Everything else — user Durable Object bindings, containers, R2 buckets,
  * and the complete migration history — belongs to the user's own
- * `wrangler.jsonc` and passes through untouched (adding an agent = file +
- * mount + migration tag).
+ * config and passes through untouched. Migration history (Wrangler) or the
+ * `exports` lifecycle map (native config) remains user-owned.
  *
  * Linkage: `vite.config.ts` is re-evaluated per Vite config resolution, so
  * `flue()` and `flueWorkerConfig()` are fresh instances each resolution.
@@ -132,11 +131,7 @@ export function flueWorkerConfig(): FlueWorkerConfigCustomizer {
 				),
 			);
 		}
-		if ('compatibilityDate' in config) {
-			applyNativeFlueWorkerConfig(config as Record<string, unknown>, source.doBindings);
-		} else {
-			applyFlueWorkerConfig(config as Record<string, unknown>, source.doBindings);
-		}
+		applyFlueWorkerConfig(config as Record<string, unknown>, source.doBindings);
 	};
 }
 
@@ -159,35 +154,43 @@ export function cloudflareOrderingError(): Error {
 // ─── Customizer body ────────────────────────────────────────────────────────
 
 /**
- * Mutate the sibling's resolved worker config in place. The sibling resolves
- * the active Cloudflare environment (`CLOUDFLARE_ENV`) before invoking the
- * customizer, so this always sees — and every contribution lands in — the
- * effective config for the environment actually being built or served.
+ * Mutate the sibling's resolved Worker config in place. The sibling loads
+ * the authored config for the active environment or mode before invoking
+ * the customizer, so every contribution lands in the effective config.
  */
 function applyFlueWorkerConfig(
 	config: Record<string, unknown>,
 	doBindings: readonly FlueDoBinding[],
 ): void {
-	validateCompatibilityDate(config);
+	const native = 'compatibilityDate' in config;
+	validateCompatibilityDate(config, native ? 'compatibilityDate' : 'compatibility_date');
 
 	// compatibility_flags: union in nodejs_compat. The deploy artifact is the
 	// sibling-emitted merged config, so the union is always effective; the
 	// user's authored file no longer needs to carry the flag itself.
-	const flags = Array.isArray(config.compatibility_flags)
-		? (config.compatibility_flags as unknown[]).filter((f): f is string => typeof f === 'string')
+	const flagsField = native ? 'compatibilityFlags' : 'compatibility_flags';
+	const flags = Array.isArray(config[flagsField])
+		? (config[flagsField] as unknown[]).filter((flag): flag is string => typeof flag === 'string')
 		: [];
+
 	if (!flags.includes(REQUIRED_COMPAT_FLAG)) flags.push(REQUIRED_COMPAT_FLAG);
-	config.compatibility_flags = flags;
+	config[flagsField] = flags;
 
 	// main: default to the generated virtual Worker entry. A user-set main is
 	// respected — it owns the Worker entry and can re-export the generated
 	// module (`export * from 'virtual:flue/worker'` for the Durable Object
 	// classes) while composing its own default handler.
-	if (typeof config.main !== 'string' || config.main.length === 0) {
-		config.main = VIRTUAL_WORKER_ENTRY;
+	const entryField = native ? 'entrypoint' : 'main';
+
+	if (typeof config[entryField] !== 'string' || config[entryField].length === 0) {
+		config[entryField] = VIRTUAL_WORKER_ENTRY;
 	}
 
-	mergeDurableObjectBindings(config, doBindings);
+	if (native) {
+		mergeNativeDurableObjectBindings(config, doBindings);
+	} else {
+		mergeDurableObjectBindings(config, doBindings);
+	}
 
 	// compatibility_date and name are left to the sibling's own defaults when
 	// unset (its date default tracks the workerd version it bundles, which is
@@ -202,10 +205,7 @@ function applyFlueWorkerConfig(
  * AsyncLocalStorage) produce confusing runtime errors, and a user pins a
  * date deliberately.
  */
-function validateCompatibilityDate(
-	config: Record<string, unknown>,
-	field = 'compatibility_date',
-): void {
+function validateCompatibilityDate(config: Record<string, unknown>, field: string): void {
 	const userDate = config[field];
 
 	if (typeof userDate !== 'string') return;
@@ -217,6 +217,7 @@ function validateCompatibilityDate(
 			),
 		);
 	}
+
 	if (userDate < MIN_COMPATIBILITY_DATE) {
 		throw stackless(
 			new Error(
@@ -228,23 +229,10 @@ function validateCompatibilityDate(
 	}
 }
 
-function applyNativeFlueWorkerConfig(
+function mergeNativeDurableObjectBindings(
 	config: Record<string, unknown>,
 	doBindings: readonly FlueDoBinding[],
 ): void {
-	validateCompatibilityDate(config, 'compatibilityDate');
-	const flags = Array.isArray(config.compatibilityFlags)
-		? (config.compatibilityFlags as unknown[]).filter(
-				(flag): flag is string => typeof flag === 'string',
-			)
-		: [];
-
-	if (!flags.includes(REQUIRED_COMPAT_FLAG)) flags.push(REQUIRED_COMPAT_FLAG);
-	config.compatibilityFlags = flags;
-
-	if (typeof config.entrypoint !== 'string' || config.entrypoint.length === 0) {
-		config.entrypoint = VIRTUAL_WORKER_ENTRY;
-	}
 	const env = { ...(config.env as Record<string, unknown> | undefined) };
 
 	for (const binding of doBindings) {
