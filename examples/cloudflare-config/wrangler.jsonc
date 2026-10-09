@@ -1,6 +1,0 @@
-{
-	"name": "flue-cloudflare-config",
-	"compatibility_date": "2026-09-28",
-	"vars": { "MESSAGE": "hello" },
-	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["FlueEchoAgent"] }]
-}

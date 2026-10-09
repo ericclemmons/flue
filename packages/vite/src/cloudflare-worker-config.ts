@@ -11,22 +11,23 @@
  * });
  * ```
  *
- * The sibling plugin owns config loading and build output. Version 1 reads
- * `wrangler.jsonc`; version 2 reads `cloudflare.config.ts` and invokes
- * `flueNativeWorkerConfig()` with the parsed native Worker schema. Flue never
- * reads or writes either configuration file. The customizer
+ * The sibling plugin owns the wrangler config end to end: it reads the
+ * user's authored `wrangler.jsonc` (its `configPath`), resolves the active
+ * Cloudflare environment, invokes this customizer on the resolved config,
+ * and emits the merged deploy config into the build output. Flue never
+ * reads, merges, or writes a wrangler config file. The customizer
  * contributes only what Flue derives at config-resolution time:
  *
- *   - `main` / `entrypoint` → `virtual:flue/worker`, the generated Worker
- *     entry (left alone when the user set their own entry);
+ *   - `main` → `virtual:flue/worker`, the generated Worker entry served by
+ *     the `flue()` plugin (left alone when the user set their own `main`);
  *   - one Durable Object binding per scanned `'use agent'` agent;
  *   - the `nodejs_compat` compatibility flag (unioned in);
  *   - validation of a user-set `compatibility_date` against Flue's floor.
  *
  * Everything else — user Durable Object bindings, containers, R2 buckets,
  * and the complete migration history — belongs to the user's own
- * config and passes through untouched. Migration history (Wrangler) or the
- * `exports` lifecycle map (native config) remains user-owned.
+ * `wrangler.jsonc` and passes through untouched (adding an agent = file +
+ * mount + migration tag).
  *
  * Linkage: `vite.config.ts` is re-evaluated per Vite config resolution, so
  * `flue()` and `flueWorkerConfig()` are fresh instances each resolution.
@@ -86,27 +87,26 @@ export function registerFlueWorkerConfigSource(source: FlueWorkerConfigSource): 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /**
- * The resolved Wrangler fields Flue owns, with their types and requiredness
- * inherited directly from Wrangler's configuration contract.
+ * Flue's worker-config customizer, compatible with the sibling plugin's
+ * `cloudflare({ config })` option. The parameter retains the resolved
+ * Wrangler types for the fields Flue contributes.
  */
 type WranglerWorkerConfig = Pick<
 	Unstable_Config,
 	'main' | 'compatibility_date' | 'compatibility_flags' | 'durable_objects'
 >;
-
 export type FlueWorkerConfigCustomizer = (config: WranglerWorkerConfig) => void;
-export type FlueNativeWorkerConfigCustomizer = (config: ParsedInputWorkerConfig) => void;
 
 /**
  * Create the worker-config customizer for the `flue()` instance created in
  * the same `vite.config.ts` evaluation. Must be called after `flue()`.
  */
 export function flueWorkerConfig(): FlueWorkerConfigCustomizer {
-	return createWorkerConfigCustomizer(applyWranglerWorkerConfig);
+	return createWorkerConfigCustomizer(applyFlueWorkerConfig);
 }
 
-export function flueNativeWorkerConfig(): FlueNativeWorkerConfigCustomizer {
-	return createWorkerConfigCustomizer(applyNativeWorkerConfig);
+export function flueNativeWorkerConfig(): (config: ParsedInputWorkerConfig) => void {
+	return createWorkerConfigCustomizer(applyExperimentalWorkerConfig);
 }
 
 function createWorkerConfigCustomizer<Config>(
@@ -118,7 +118,6 @@ function createWorkerConfigCustomizer<Config>(
 	// linger in the module scope and be captured silently.
 	const source = latestSource;
 	latestSource = undefined;
-
 	if (!source) {
 		throw stackless(
 			new Error(
@@ -128,7 +127,6 @@ function createWorkerConfigCustomizer<Config>(
 			),
 		);
 	}
-
 	return (config) => {
 		source.customizerInvoked = true;
 		// Preview serves the already-built Worker output; its config is the
@@ -172,32 +170,38 @@ export function cloudflareOrderingError(): Error {
 // ─── Customizer body ────────────────────────────────────────────────────────
 
 /**
- * Mutate the sibling's resolved Worker config in place. The sibling loads
- * the authored config for the active environment or mode before invoking
- * the customizer, so every contribution lands in the effective config.
+ * Mutate the sibling's resolved worker config in place. The sibling resolves
+ * the active Cloudflare environment (`CLOUDFLARE_ENV`) before invoking the
+ * customizer, so this always sees — and every contribution lands in — the
+ * effective config for the environment actually being built or served.
  */
-function applyNativeWorkerConfig(
-	config: ParsedInputWorkerConfig,
-	doBindings: readonly FlueDoBinding[],
-): void {
-	validateCompatibilityDate(config.compatibilityDate, 'compatibilityDate');
-	config.compatibilityFlags = addCompatibilityFlag(config.compatibilityFlags);
-	config.entrypoint ||= VIRTUAL_WORKER_ENTRY;
-	mergeNativeDurableObjectBindings(config, doBindings);
-}
-
-function applyWranglerWorkerConfig(
+function applyFlueWorkerConfig(
 	config: WranglerWorkerConfig,
 	doBindings: readonly FlueDoBinding[],
 ): void {
-	validateCompatibilityDate(config.compatibility_date, 'compatibility_date');
-	config.compatibility_flags = addCompatibilityFlag(config.compatibility_flags);
-	config.main ||= VIRTUAL_WORKER_ENTRY;
-	mergeDurableObjectBindings(config, doBindings);
-}
+	validateCompatibilityDate(config.compatibility_date);
 
-function addCompatibilityFlag(flags: string[] = []): string[] {
-	return flags.includes(REQUIRED_COMPAT_FLAG) ? flags : [...flags, REQUIRED_COMPAT_FLAG];
+	// compatibility_flags: union in nodejs_compat. The deploy artifact is the
+	// sibling-emitted merged config, so the union is always effective; the
+	// user's authored file no longer needs to carry the flag itself.
+	const flags = [...config.compatibility_flags];
+	if (!flags.includes(REQUIRED_COMPAT_FLAG)) flags.push(REQUIRED_COMPAT_FLAG);
+	config.compatibility_flags = flags;
+
+	// main: default to the generated virtual Worker entry. A user-set main is
+	// respected — it owns the Worker entry and can re-export the generated
+	// module (`export * from 'virtual:flue/worker'` for the Durable Object
+	// classes) while composing its own default handler.
+	if (!config.main) {
+		config.main = VIRTUAL_WORKER_ENTRY;
+	}
+
+	mergeDurableObjectBindings(config, doBindings);
+
+	// compatibility_date and name are left to the sibling's own defaults when
+	// unset (its date default tracks the workerd version it bundles, which is
+	// strictly better than a Flue-pinned floor). containers, migrations, and
+	// every other field pass through untouched.
 }
 
 /**
@@ -207,9 +211,11 @@ function addCompatibilityFlag(flags: string[] = []): string[] {
  * AsyncLocalStorage) produce confusing runtime errors, and a user pins a
  * date deliberately.
  */
-function validateCompatibilityDate(userDate: string | undefined, field: string): void {
+function validateCompatibilityDate(
+	userDate: string | undefined,
+	field = 'compatibility_date',
+): void {
 	if (userDate === undefined) return;
-
 	if (!/^\d{4}-\d{2}-\d{2}$/.test(userDate)) {
 		throw stackless(
 			new Error(
@@ -217,7 +223,6 @@ function validateCompatibilityDate(userDate: string | undefined, field: string):
 			),
 		);
 	}
-
 	if (userDate < MIN_COMPATIBILITY_DATE) {
 		throw stackless(
 			new Error(
@@ -229,15 +234,55 @@ function validateCompatibilityDate(userDate: string | undefined, field: string):
 	}
 }
 
-function mergeNativeDurableObjectBindings(
+/**
+ * Add Flue's generated per-agent DO bindings, validating that any user
+ * binding occupying a Flue-reserved name is exactly the binding Flue would
+ * generate (harmless duplication) rather than a conflicting redirection.
+ */
+function mergeDurableObjectBindings(
+	config: WranglerWorkerConfig,
+	doBindings: readonly FlueDoBinding[],
+): void {
+	const existingDo = config.durable_objects;
+	const existingBindings = existingDo.bindings;
+	const existingByName = new Map(existingBindings.map((binding) => [binding.name, binding]));
+	for (const binding of doBindings) {
+		const existing = existingByName.get(binding.name);
+		if (!existing) continue;
+		if (
+			existing.class_name !== binding.class_name ||
+			existing.script_name !== undefined ||
+			existing.environment !== undefined
+		) {
+			throw stackless(
+				new Error(
+					`[flue] wrangler config durable object binding "${binding.name}" is reserved by Flue. ` +
+						`Expected a local class_name "${binding.class_name}" binding without script_name or environment.`,
+				),
+			);
+		}
+	}
+	const bindingsToAdd = doBindings
+		.filter((binding) => !existingByName.has(binding.name))
+		.map((binding) => ({ name: binding.name, class_name: binding.class_name }));
+	config.durable_objects = {
+		...existingDo,
+		bindings: [...existingBindings, ...bindingsToAdd],
+	};
+}
+
+function applyExperimentalWorkerConfig(
 	config: ParsedInputWorkerConfig,
 	doBindings: readonly FlueDoBinding[],
 ): void {
+	validateCompatibilityDate(config.compatibilityDate, 'compatibilityDate');
+	const flags = [...(config.compatibilityFlags ?? [])];
+	if (!flags.includes(REQUIRED_COMPAT_FLAG)) flags.push(REQUIRED_COMPAT_FLAG);
+	config.compatibilityFlags = flags;
+	if (!config.entrypoint) config.entrypoint = VIRTUAL_WORKER_ENTRY;
 	const env: ParsedInputWorkerConfig['env'] = { ...config.env };
-
 	for (const binding of doBindings) {
 		const existing = env[binding.name];
-
 		if (existing !== undefined) {
 			if (
 				existing.type !== 'durable-object' ||
@@ -260,43 +305,4 @@ function mergeNativeDurableObjectBindings(
 		}
 	}
 	config.env = env;
-}
-
-/**
- * Add Flue's generated per-agent DO bindings, validating that any user
- * binding occupying a Flue-reserved name is exactly the binding Flue would
- * generate (harmless duplication) rather than a conflicting redirection.
- */
-function mergeDurableObjectBindings(
-	config: WranglerWorkerConfig,
-	doBindings: readonly FlueDoBinding[],
-): void {
-	const existingBindings = config.durable_objects.bindings;
-	const existingByName = new Map(existingBindings.map((binding) => [binding.name, binding]));
-
-	for (const binding of doBindings) {
-		const existing = existingByName.get(binding.name);
-
-		if (!existing) continue;
-
-		if (
-			existing.class_name !== binding.class_name ||
-			existing.script_name !== undefined ||
-			existing.environment !== undefined
-		) {
-			throw stackless(
-				new Error(
-					`[flue] wrangler config durable object binding "${binding.name}" is reserved by Flue. ` +
-						`Expected a local class_name "${binding.class_name}" binding without script_name or environment.`,
-				),
-			);
-		}
-	}
-	const bindingsToAdd = doBindings
-		.filter((binding) => !existingByName.has(binding.name))
-		.map((binding) => ({ name: binding.name, class_name: binding.class_name }));
-	config.durable_objects = {
-		...config.durable_objects,
-		bindings: [...existingBindings, ...bindingsToAdd],
-	};
 }

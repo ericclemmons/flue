@@ -17,11 +17,9 @@
  * package's own tests. A tooling-facing scan API can ship on purpose later.
  */
 export type { AgentScanResult } from './agent-scan.ts';
-export type {
-	FlueNativeWorkerConfigCustomizer,
-	FlueWorkerConfigCustomizer,
-} from './cloudflare-worker-config.ts';
-export { flueNativeWorkerConfig, flueWorkerConfig } from './cloudflare-worker-config.ts';
+export type { FlueWorkerConfigCustomizer } from './cloudflare-worker-config.ts';
+export { flueWorkerConfig } from './cloudflare-worker-config.ts';
+export { flueNativeWorkerConfig } from './cloudflare-worker-config.ts';
 export type { FlueResolvedProjectInfo, FlueVitePluginApi } from './flue-plugin.ts';
 export { flue } from './flue-plugin.ts';
 export type {
