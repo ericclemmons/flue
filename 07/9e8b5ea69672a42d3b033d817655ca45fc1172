@@ -1,0 +1,37 @@
+.prettierignore
+  s_5a7827c8da08f3::t_bb3844e6e27f6f 4
+examples/cloudflare-config/.gitignore
+  s_5a7827c8da08f3::t_d6159984210c4f 1
+examples/cloudflare-config/README.md
+  s_5a7827c8da08f3::t_aeaa393ab92855 1-24
+examples/cloudflare-config/cloudflare.config.ts
+  s_5a7827c8da08f3::t_5b6731ad6e55de 1-12
+examples/cloudflare-config/package.json
+  s_5a7827c8da08f3::t_ec51774a9790ae 1-21
+examples/cloudflare-config/src/agents/with-cloudflare-binding.ts
+  s_5a7827c8da08f3::t_371e533aa2b856 1-7
+examples/cloudflare-config/src/app.ts
+  s_5a7827c8da08f3::t_f75c3406a442c8 1-10
+examples/cloudflare-config/tsconfig.json
+  s_5a7827c8da08f3::t_b971650e40fc94 1-7
+examples/cloudflare-config/vite.config.ts
+  s_5a7827c8da08f3::t_27fc82866cb01c 1-7
+pnpm-lock.yaml
+  s_5a7827c8da08f3::t_6497949d7f0f33 1948-1972,10034-10090,18774-18863
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "079e8b5ea69672a42d3b033d817655ca45fc1172",
+  "prompts": {},
+  "sessions": {
+    "s_5a7827c8da08f3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11db7-6b64-7260-838a-060258d66c84",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Eric Clemmons <eclemmons@cloudflare.com>"
+    }
+  }
+}
