@@ -1873,6 +1873,9 @@ importers:
 
   packages/vite:
     dependencies:
+      '@cloudflare/config':
+        specifier: 0.22.0
+        version: 0.22.0
       '@flue/runtime':
         specifier: workspace:*
         version: link:../runtime

@@ -19,18 +19,24 @@ beta; this example does not promise that an arbitrary future beta has the same c
 Version `1.58.0` rejects `config` together with `experimental.newConfig: true`. Removing
 `flueWorkerConfig()` is not a fix: Flue still needs its generated entry and bindings, and its
 missing-customizer diagnostic remains enabled. Version 2 supplies a supported customizer for
-native Worker configuration, with the same Vite wiring:
+native Worker configuration. Select its typed customizer explicitly:
 
 ```ts
-plugins: [flue(), cloudflare({ config: flueWorkerConfig(), remoteBindings: false })];
+plugins: [flue(), cloudflare({ config: flueNativeWorkerConfig(), remoteBindings: false })];
 ```
 
-Flue selects the native schema by its required `compatibilityDate` field. It supplies
+`flueNativeWorkerConfig()` receives Cloudflare's schema-derived `ParsedInputWorkerConfig`;
+`flueWorkerConfig()` retains Wrangler's resolved field types. Neither adapter guesses the schema
+from object properties or casts bindings to an untyped dictionary. The native adapter supplies
 `entrypoint`, `compatibilityFlags`, and `env` Durable Object bindings instead of Wrangler's
 `main`, `compatibility_flags`, and `durable_objects`. An authored entry wins; reserved binding
 collisions and old compatibility dates still fail. Native `exports` lifecycle declarations
 and Wrangler migration history remain user-owned and unchanged. Config loading, schema
-validation, bundling, and local runtime startup remain Cloudflare's responsibility.
+validation, bundling, and local runtime startup remain Cloudflare's responsibility. Its plugin
+parses the native schema before and after the callback; Flue checks only its compatibility-date
+floor/format and ownership of reserved agent bindings. The binding `type` check narrows
+Cloudflare's discriminated union, not an unknown object. `@cloudflare/config` is pinned to the
+native plugin's `0.22.0` schema; Wrangler is an optional peer so Node-only apps do not install it.
 
 ## Run locally
 
@@ -68,6 +74,8 @@ At green commit `61883754`, rebuilding `@flue/vite` and repeating that test comm
 **three passes**. The adapter writes native fields through the supported callback while
 retaining the Wrangler path. The final refactor shares date/flag/entry handling, keeps
 schema-specific binding merges separate, and adds collision/preservation and local-runtime checks.
+The review revision replaces the initially untyped adapter with separate native and Wrangler
+callbacks, carrying the upstream types through the captured-state wrapper and binding merges.
 
 ## Call diff
 
@@ -76,19 +84,26 @@ on this fork branch, not landed upstream. No proposed Cloudflare API is required
 
 ```diff
  Vite config: flue() → registerFlueWorkerConfigSource(source)
- Vite config: flueWorkerConfig(): (config: object) => void → capture that source
+- Vite config: flueWorkerConfig(): (config: object) => void → capture that source
++ Wrangler: flueWorkerConfig(): (config: WranglerWorkerConfig) => void → capture that source
++ Native: flueNativeWorkerConfig(): (config: ParsedInputWorkerConfig) => void → capture that source
  flue.config(): load project → scanAgents() → source.configReady = true
- cloudflare.config(): load authored config → invoke customizer(config)
--  applyFlueWorkerConfig(config, bindings): always write Wrangler fields
-+  applyFlueWorkerConfig(config, bindings): select native or Wrangler schema
-+    native → mergeNativeDurableObjectBindings(): validate owner/class → worker.env
-     Wrangler → mergeDurableObjectBindings(): validate owner/class → durable_objects
+ cloudflare.config(): load authored config
++  native → InputWorkerSchema.parse() → flueNativeWorkerConfig()(config)
++  Wrangler → normalized Wrangler config → flueWorkerConfig()(config)
+-  applyFlueWorkerConfig(config: Record<string, unknown>, bindings): write Wrangler fields
++  native → applyNativeWorkerConfig(config: ParsedInputWorkerConfig, bindings)
++    mergeNativeDurableObjectBindings(): narrow binding.type → validate owner/class → worker.env
++  Wrangler → applyWranglerWorkerConfig(config: WranglerWorkerConfig, bindings)
+     mergeDurableObjectBindings(): validate owner/class → durable_objects
  flue.configResolved(): require customizerInvoked (except artifact preview)
  flue.resolveId()/load(): virtual:flue/worker → generateCloudflareEntry()
- Cloudflare: validate configuration → bundle generated entry → emit build output
+ Cloudflare: validate customized configuration → bundle generated entry → emit build output
 ```
 
 Pairing, ordering, compatibility-date, and binding-collision errors still stop config resolution.
+Cloudflare owns schema parsing; Flue owns generated entries, agent bindings, and their callback
+pairing. Explicit schema-specific entry points replace the rejected property-based detection.
 Preview customizers leave built artifacts untouched. Test-owned servers close on success or failure.
 
 ## Sources

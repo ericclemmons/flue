@@ -12,9 +12,9 @@
  * ```
  *
  * The sibling plugin owns config loading and build output. Version 1 reads
- * `wrangler.jsonc`; version 2 reads `cloudflare.config.ts` and invokes the
- * same customizer with the native Worker schema. Flue never reads or writes
- * either configuration file. The customizer
+ * `wrangler.jsonc`; version 2 reads `cloudflare.config.ts` and invokes
+ * `flueNativeWorkerConfig()` with the parsed native Worker schema. Flue never
+ * reads or writes either configuration file. The customizer
  * contributes only what Flue derives at config-resolution time:
  *
  *   - `main` / `entrypoint` → `virtual:flue/worker`, the generated Worker
@@ -38,6 +38,8 @@
  * its own `flue()` instance, concurrent Vite servers in one process never
  * cross-talk.
  */
+import type { ParsedInputWorkerConfig } from '@cloudflare/config';
+import type { Unstable_Config } from 'wrangler';
 import { stackless } from './diagnostics.ts';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -84,24 +86,39 @@ export function registerFlueWorkerConfigSource(source: FlueWorkerConfigSource): 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /**
- * Flue's worker-config customizer, compatible with the sibling plugin's
- * `cloudflare({ config })` option. The parameter is typed structurally
- * (`object`) because `@flue/vite` deliberately has no dependency on
- * `@cloudflare/vite-plugin`; the sibling passes its resolved `WorkerConfig`.
+ * The resolved Wrangler fields Flue owns, with their types and requiredness
+ * inherited directly from Wrangler's configuration contract.
  */
-export type FlueWorkerConfigCustomizer = (config: object) => void;
+type WranglerWorkerConfig = Pick<
+	Unstable_Config,
+	'main' | 'compatibility_date' | 'compatibility_flags' | 'durable_objects'
+>;
+
+export type FlueWorkerConfigCustomizer = (config: WranglerWorkerConfig) => void;
+export type FlueNativeWorkerConfigCustomizer = (config: ParsedInputWorkerConfig) => void;
 
 /**
  * Create the worker-config customizer for the `flue()` instance created in
  * the same `vite.config.ts` evaluation. Must be called after `flue()`.
  */
 export function flueWorkerConfig(): FlueWorkerConfigCustomizer {
+	return createWorkerConfigCustomizer(applyWranglerWorkerConfig);
+}
+
+export function flueNativeWorkerConfig(): FlueNativeWorkerConfigCustomizer {
+	return createWorkerConfigCustomizer(applyNativeWorkerConfig);
+}
+
+function createWorkerConfigCustomizer<Config>(
+	applyConfig: (config: Config, doBindings: readonly FlueDoBinding[]) => void,
+): (config: Config) => void {
 	// One-shot capture: consuming the slot means a flueWorkerConfig() created
 	// before its flue() always hits the clear error below — even in a warm
 	// process where a previous resolution's registration would otherwise
 	// linger in the module scope and be captured silently.
 	const source = latestSource;
 	latestSource = undefined;
+
 	if (!source) {
 		throw stackless(
 			new Error(
@@ -111,7 +128,8 @@ export function flueWorkerConfig(): FlueWorkerConfigCustomizer {
 			),
 		);
 	}
-	return (config: object) => {
+
+	return (config) => {
 		source.customizerInvoked = true;
 		// Preview serves the already-built Worker output; its config is the
 		// emitted deploy config and must pass through untouched.
@@ -131,7 +149,7 @@ export function flueWorkerConfig(): FlueWorkerConfigCustomizer {
 				),
 			);
 		}
-		applyFlueWorkerConfig(config as Record<string, unknown>, source.doBindings);
+		applyConfig(config, source.doBindings);
 	};
 }
 
@@ -158,44 +176,28 @@ export function cloudflareOrderingError(): Error {
  * the authored config for the active environment or mode before invoking
  * the customizer, so every contribution lands in the effective config.
  */
-function applyFlueWorkerConfig(
-	config: Record<string, unknown>,
+function applyNativeWorkerConfig(
+	config: ParsedInputWorkerConfig,
 	doBindings: readonly FlueDoBinding[],
 ): void {
-	const native = 'compatibilityDate' in config;
-	validateCompatibilityDate(config, native ? 'compatibilityDate' : 'compatibility_date');
+	validateCompatibilityDate(config.compatibilityDate, 'compatibilityDate');
+	config.compatibilityFlags = addCompatibilityFlag(config.compatibilityFlags);
+	config.entrypoint ||= VIRTUAL_WORKER_ENTRY;
+	mergeNativeDurableObjectBindings(config, doBindings);
+}
 
-	// compatibility_flags: union in nodejs_compat. The deploy artifact is the
-	// sibling-emitted merged config, so the union is always effective; the
-	// user's authored file no longer needs to carry the flag itself.
-	const flagsField = native ? 'compatibilityFlags' : 'compatibility_flags';
-	const flags = Array.isArray(config[flagsField])
-		? (config[flagsField] as unknown[]).filter((flag): flag is string => typeof flag === 'string')
-		: [];
+function applyWranglerWorkerConfig(
+	config: WranglerWorkerConfig,
+	doBindings: readonly FlueDoBinding[],
+): void {
+	validateCompatibilityDate(config.compatibility_date, 'compatibility_date');
+	config.compatibility_flags = addCompatibilityFlag(config.compatibility_flags);
+	config.main ||= VIRTUAL_WORKER_ENTRY;
+	mergeDurableObjectBindings(config, doBindings);
+}
 
-	if (!flags.includes(REQUIRED_COMPAT_FLAG)) flags.push(REQUIRED_COMPAT_FLAG);
-	config[flagsField] = flags;
-
-	// main: default to the generated virtual Worker entry. A user-set main is
-	// respected — it owns the Worker entry and can re-export the generated
-	// module (`export * from 'virtual:flue/worker'` for the Durable Object
-	// classes) while composing its own default handler.
-	const entryField = native ? 'entrypoint' : 'main';
-
-	if (typeof config[entryField] !== 'string' || config[entryField].length === 0) {
-		config[entryField] = VIRTUAL_WORKER_ENTRY;
-	}
-
-	if (native) {
-		mergeNativeDurableObjectBindings(config, doBindings);
-	} else {
-		mergeDurableObjectBindings(config, doBindings);
-	}
-
-	// compatibility_date and name are left to the sibling's own defaults when
-	// unset (its date default tracks the workerd version it bundles, which is
-	// strictly better than a Flue-pinned floor). containers, migrations, and
-	// every other field pass through untouched.
+function addCompatibilityFlag(flags: string[] = []): string[] {
+	return flags.includes(REQUIRED_COMPAT_FLAG) ? flags : [...flags, REQUIRED_COMPAT_FLAG];
 }
 
 /**
@@ -205,10 +207,8 @@ function applyFlueWorkerConfig(
  * AsyncLocalStorage) produce confusing runtime errors, and a user pins a
  * date deliberately.
  */
-function validateCompatibilityDate(config: Record<string, unknown>, field: string): void {
-	const userDate = config[field];
-
-	if (typeof userDate !== 'string') return;
+function validateCompatibilityDate(userDate: string | undefined, field: string): void {
+	if (userDate === undefined) return;
 
 	if (!/^\d{4}-\d{2}-\d{2}$/.test(userDate)) {
 		throw stackless(
@@ -230,23 +230,18 @@ function validateCompatibilityDate(config: Record<string, unknown>, field: strin
 }
 
 function mergeNativeDurableObjectBindings(
-	config: Record<string, unknown>,
+	config: ParsedInputWorkerConfig,
 	doBindings: readonly FlueDoBinding[],
 ): void {
-	const env = { ...(config.env as Record<string, unknown> | undefined) };
+	const env: ParsedInputWorkerConfig['env'] = { ...config.env };
 
 	for (const binding of doBindings) {
 		const existing = env[binding.name];
 
 		if (existing !== undefined) {
 			if (
-				typeof existing !== 'object' ||
-				existing === null ||
-				!('type' in existing) ||
 				existing.type !== 'durable-object' ||
-				!('exportName' in existing) ||
 				existing.exportName !== binding.class_name ||
-				!('worker' in existing) ||
 				existing.worker !== config.name
 			) {
 				throw stackless(
@@ -273,24 +268,17 @@ function mergeNativeDurableObjectBindings(
  * generate (harmless duplication) rather than a conflicting redirection.
  */
 function mergeDurableObjectBindings(
-	config: Record<string, unknown>,
+	config: WranglerWorkerConfig,
 	doBindings: readonly FlueDoBinding[],
 ): void {
-	const existingDo =
-		typeof config.durable_objects === 'object' && config.durable_objects !== null
-			? (config.durable_objects as Record<string, unknown>)
-			: {};
-	const existingBindings = Array.isArray(existingDo.bindings)
-		? (existingDo.bindings as unknown[]).filter(
-				(b): b is Record<string, unknown> => typeof b === 'object' && b !== null,
-			)
-		: [];
-	const existingByName = new Map(
-		existingBindings.filter((b) => typeof b.name === 'string').map((b) => [b.name as string, b]),
-	);
+	const existingBindings = config.durable_objects.bindings;
+	const existingByName = new Map(existingBindings.map((binding) => [binding.name, binding]));
+
 	for (const binding of doBindings) {
 		const existing = existingByName.get(binding.name);
+
 		if (!existing) continue;
+
 		if (
 			existing.class_name !== binding.class_name ||
 			existing.script_name !== undefined ||
@@ -308,7 +296,7 @@ function mergeDurableObjectBindings(
 		.filter((binding) => !existingByName.has(binding.name))
 		.map((binding) => ({ name: binding.name, class_name: binding.class_name }));
 	config.durable_objects = {
-		...existingDo,
+		...config.durable_objects,
 		bindings: [...existingBindings, ...bindingsToAdd],
 	};
 }
