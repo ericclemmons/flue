@@ -1,6 +1,7 @@
 **/.astro/
 **/.flue-vite/
 **/.wrangler/
+examples/cloudflare-config/.cloudflare/
 **/dist/
 **/node_modules/
 **/.turbo/

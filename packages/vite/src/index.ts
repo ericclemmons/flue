@@ -19,6 +19,7 @@
 export type { AgentScanResult } from './agent-scan.ts';
 export type { FlueWorkerConfigCustomizer } from './cloudflare-worker-config.ts';
 export { flueWorkerConfig } from './cloudflare-worker-config.ts';
+export { flueNativeWorkerConfig } from './cloudflare-worker-config.ts';
 export type { FlueResolvedProjectInfo, FlueVitePluginApi } from './flue-plugin.ts';
 export { flue } from './flue-plugin.ts';
 export type {
