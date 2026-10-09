@@ -1,0 +1,31 @@
+examples/cloudflare-config/README.md
+  s_5a7827c8da08f3::t_1079764a66fbaa 22,25,28-30,35-39,77-78,87-89,91-98,101,105-106
+examples/cloudflare-config/vite.config.ts
+  s_5a7827c8da08f3::t_ad1428e1eacaf2 2,6
+packages/vite/package.json
+  s_5a7827c8da08f3::t_f9f52553b108bb 38,47-53
+packages/vite/src/cloudflare-worker-config.test.ts
+  s_5a7827c8da08f3::t_2c1678ef7dc972 1,4,7,11,20,22-25,30,34,59-64,72,75,89-104,106-108,112-120,132-136,138-142,146-148
+packages/vite/src/cloudflare-worker-config.ts
+  s_5a7827c8da08f3::t_4e51f4e2108c99 15-17,41-42,89-90,92-98,105-114,121,131-132,152,179-180,183-187,189-197,199-200,210-211,233,236,271,274-276,279,281,299
+packages/vite/src/index.ts
+  s_5a7827c8da08f3::t_216eddc9d62a0d 20-24
+pnpm-lock.yaml
+  s_5a7827c8da08f3::t_084eae459c53ad 1876-1878
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "54e52c1b4beb38429ada84bd9c3d91bcf1754812",
+  "prompts": {},
+  "sessions": {
+    "s_5a7827c8da08f3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11db7-6b64-7260-838a-060258d66c84",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Eric Clemmons <eclemmons@cloudflare.com>"
+    }
+  }
+}
